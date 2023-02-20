@@ -93,13 +93,24 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 			return false, generalError("Failed to retrieve task stage", err)
 		}
 
+		fmt.Printf("BEGIN stage.Status %s\n", stage.Status)
+
 		switch stage.Status {
 		case tfe.TaskStagePending:
 			// Waiting for it to start
 			return true, nil
-		// Note: Terminal statuses need to print out one last time just in case
-		case tfe.TaskStageRunning, tfe.TaskStagePassed:
+		case tfe.TaskStageRunning:
 			ok, e := processSummarizers(ctx, output, stage, summarizers, errs)
+			fmt.Printf("BEGIN TaskStageRunning ok=%t\n", ok)
+			if e != nil {
+				errs = e
+			}
+			// TaskStageRunning is not a terminal state so we must continue to poll
+			return true, nil
+		// Note: Terminal statuses need to print out one last time just in case
+		case tfe.TaskStagePassed:
+			ok, e := processSummarizers(ctx, output, stage, summarizers, errs)
+			fmt.Printf("BEGIN TaskStagePassed ok=%t\n", ok)
 			if e != nil {
 				errs = e
 			}
@@ -117,6 +128,8 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 			return false, fmt.Errorf("Task Stage %s.", stage.Status)
 		case tfe.TaskStageAwaitingOverride:
 			ok, e := processSummarizers(ctx, output, stage, summarizers, errs)
+			fmt.Printf("BEGIN processSummarizers ok=%t\n", ok)
+
 			if e != nil {
 				errs = e
 			}
@@ -124,6 +137,7 @@ func (b *Cloud) runTaskStage(ctx *IntegrationContext, output IntegrationOutputWr
 				return true, nil
 			}
 			cont, err := b.processStageOverrides(ctx, output, stage.ID)
+			fmt.Printf("BEGIN processStageOverrides cont=%t\n", cont)
 			if err != nil {
 				errs = multierror.Append(errs, err)
 			} else {
@@ -176,6 +190,8 @@ func (b *Cloud) processStageOverrides(context *IntegrationContext, output Integr
 	if err != errRunOverridden {
 		if _, err = b.client.TaskStages.Override(context.StopContext, taskStageID, tfe.TaskStageOverrideOptions{}); err != nil {
 			return false, generalError(fmt.Sprintf("Failed to override policy check.\n%s", runUrl), err)
+		} else {
+			return true, nil
 		}
 	} else {
 		output.Output(fmt.Sprintf("The run needs to be manually overridden or discarded.\n%s\n", runUrl))
